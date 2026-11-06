@@ -22,6 +22,7 @@ import (
 	"gpt-load/internal/codexrecovery"
 	"gpt-load/internal/connection"
 	"gpt-load/internal/dialect"
+	"gpt-load/internal/effortvariant"
 	"gpt-load/internal/execution"
 	"gpt-load/internal/health"
 	"gpt-load/internal/httplifecycle"
@@ -96,6 +97,7 @@ type runtimeCredentialRegistry interface {
 type Handler struct {
 	guardrails          requestaudit.Cache
 	autoTasks           autoTaskCache
+	effortVariants      *effortvariant.Source
 	decisionClient      autoDecisionRunner
 	manager             *state.Manager
 	catalog             *catalog.Runtime
@@ -185,6 +187,7 @@ func NewHandler(
 		forwarder: forwarder, dialects: dialects, stats: stats, mutations: mutations,
 		limiter: limiter, requestLogSink: requestLogSink, priceTables: priceTables,
 		affinityCache:    affinity.NewCache(),
+		effortVariants:   effortvariant.NewSourceFromEnv(logrus.StandardLogger().Warnf),
 		invalidLineage:   codexrecovery.NewInvalidLineage(),
 		responseBindings: state.NewResponseBindings(),
 		websocketLimits:  defaultWebsocketLimits(),
@@ -657,6 +660,19 @@ func (handler *Handler) Handle(ginContext *gin.Context) {
 		return
 	}
 	recorder.setClientModel(model)
+	if target, level, matched := handler.effortVariants.Table().Resolve(model, metadata.Reasoning); matched {
+		if rewriter, supported := selectedDialect.(dialect.ModelRewriter); supported {
+			rewritten, rewriteErr := rewriter.RewriteRequestModel(parsed, target)
+			if rewriteErr != nil {
+				handler.completeReason(ginContext, recorder, reasonInvalidProtocolRequest)
+				return
+			}
+			logrus.Debugf("effort variant %q resolved to %q (level %s)", model, target, level)
+			parsed = rewritten
+			model = target
+			metadata.Model = &target
+		}
+	}
 	recorder.setOperation(metadata.Operation)
 	recorder.setStream(metadata.Stream)
 	var boundAuto *automodel.Selection

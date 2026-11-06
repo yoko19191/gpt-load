@@ -1,0 +1,38 @@
+[
+  {
+    "name": "claude-opus-5-5-ag",
+    "levels": {
+      "low": "claude-opus-5-5-low",
+      "medium": "claude-opus-5-5-medium",
+      "high": "claude-opus-5-5-high"
+    },
+    "default": "medium"
+  },
+  {
+    "name": "claude-sonnet-5-5-ag",
+    "levels": {
+      "low": "claude-sonnet-5-5-low",
+      "medium": "claude-sonnet-5-5-medium",
+      "high": "claude-sonnet-5-5-high"
+    },
+    "default": "medium"
+  },
+  {
+    "name": "gemini-3.8-flash-ag",
+    "levels": {
+      "low": "gemini-3.8-flash-low",
+      "medium": "gemini-3.8-flash-medium",
+      "high": "gemini-3.8-flash-high"
+    },
+    "default": "medium"
+  },
+  {
+    "name": "gemini-4-argon-ag",
+    "levels": {
+      "low": "gemini-4-argon-low",
+      "medium": "gemini-4-argon-medium",
+      "high": "gemini-4-argon-high"
+    },
+    "default": "medium"
+  }
+]
