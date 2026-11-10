@@ -15,6 +15,7 @@ import type { GroupChannel } from '@modern/api/group-create'
 import type { GroupRow } from '@modern/api/groups'
 import type { ModelCandidate } from '@modern/api/model-discovery'
 import { AppButton, AppCollectionState } from '@modern/components/ui'
+import { normalizeEffortModels } from '@shared/effort-models'
 import { useApiClient } from '@shared/http/client-context'
 import { modelErrors, type GroupDraftModel } from './group-create-rules'
 import GroupModelPicker from './GroupModelPicker.vue'
@@ -53,7 +54,14 @@ const discoveryError = ref('')
 const picker = ref<InstanceType<typeof GroupModelPicker>>()
 const controller = new AbortController()
 let discovery: AbortController | undefined
-const signature = () => JSON.stringify(draft.value.map(({ id, alias }) => ({ id, alias })))
+const signature = () =>
+  JSON.stringify(
+    draft.value.map(({ id, alias, effortModels }) => ({
+      id,
+      alias,
+      effortModels: normalizeEffortModels(effortModels),
+    })),
+  )
 const dirty = computed(() => initialized.value && signature() !== baseline.value)
 watch(
   query.data,
@@ -63,6 +71,7 @@ watch(
       key,
       id: model.id,
       alias: model.alias,
+      ...(model.effortModels ? { effortModels: normalizeEffortModels(model.effortModels) } : {}),
       origin: 'configured',
     }))
     baseline.value = signature()

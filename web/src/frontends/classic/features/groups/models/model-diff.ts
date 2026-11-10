@@ -29,6 +29,7 @@ export function createModelDraft(items: readonly GroupModelItemDto[]): ModelDraf
     sources: [],
     alias: item.alias,
     alias_enabled: item.alias_enabled,
+    effort_models: item.effort_models,
     pricing_status: item.pricing_status,
     key: index,
   }))
@@ -51,10 +52,24 @@ export function createModelSyncDiff(
 ): ModelSyncDiff {
   const liveCandidates = candidates.filter(({ sources }) => sources.includes('live'))
   const liveIDs = new Set(liveCandidates.map(({ id }) => id))
-  const currentIDs = new Set(current.map(({ id }) => id.trim()).filter(Boolean))
+  const currentIDs = new Set<string>()
+  for (const item of current) {
+    if (item.id.trim()) currentIDs.add(item.id.trim())
+    if (item.effort_models?.low) currentIDs.add(item.effort_models.low)
+    if (item.effort_models?.medium) currentIDs.add(item.effort_models.medium)
+    if (item.effort_models?.high) currentIDs.add(item.effort_models.high)
+  }
   return {
     additions: liveCandidates.filter(({ id }) => !currentIDs.has(id)),
-    removals: current.filter(({ id }) => !liveIDs.has(id.trim())),
+    removals: current.filter((item) => {
+      const checkIds = [
+        item.id.trim(),
+        item.effort_models?.low,
+        item.effort_models?.medium,
+        item.effort_models?.high,
+      ].filter((value): value is string => Boolean(value))
+      return !checkIds.some((id) => liveIDs.has(id))
+    }),
   }
 }
 

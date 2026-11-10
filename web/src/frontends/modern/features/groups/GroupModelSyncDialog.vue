@@ -42,15 +42,33 @@ const modes = computed(() =>
 const live = computed(() =>
   (candidates.value ?? []).filter((model) => model.sources.includes('live')),
 )
+const coveredIds = computed(() => {
+  const set = new Set<string>()
+  for (const item of current) {
+    if (item.id.trim()) set.add(item.id.trim())
+    if (item.effortModels?.low) set.add(item.effortModels.low)
+    if (item.effortModels?.medium) set.add(item.effortModels.medium)
+    if (item.effortModels?.high) set.add(item.effortModels.high)
+  }
+  return set
+})
 const additions = computed(() =>
   mode.value === 'cleanup'
     ? []
-    : live.value.filter((model) => !current.some((item) => item.id.trim() === model.id)),
+    : live.value.filter((model) => !coveredIds.value.has(model.id)),
 )
 const removals = computed(() =>
   mode.value === 'add'
     ? []
-    : current.filter((model) => !live.value.some((item) => item.id === model.id.trim())),
+    : current.filter((model) => {
+        const checkIds = [
+          model.id.trim(),
+          model.effortModels?.low,
+          model.effortModels?.medium,
+          model.effortModels?.high,
+        ].filter((value): value is string => Boolean(value))
+        return !live.value.some((item) => checkIds.includes(item.id))
+      }),
 )
 const next = computed<GroupDraftModel[]>(() => {
   const removed = new Set(removals.value.map((model) => model.key))

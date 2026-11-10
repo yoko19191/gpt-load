@@ -33,6 +33,7 @@ import {
   AppTextField,
 } from '@modern/components/ui'
 import { useLoadingFeedback } from '@modern/components/ui/loading'
+import { normalizeEffortModels } from '@shared/effort-models'
 import { useApiClient } from '@shared/http/client-context'
 import { ApiError } from '@shared/http/errors'
 import GroupChannelSelect from './GroupChannelSelect.vue'
@@ -296,11 +297,15 @@ function request(): GroupCreateRequest {
       : { connection_type: 'api_key' as const, credentials: credentials.value }),
     ...(name.value.trim() ? { name: name.value.trim() } : {}),
     price_multiplier: price.value.trim(),
-    models: models.value.map((model) => ({
-      id: model.id.trim(),
-      alias: model.alias.trim(),
-      alias_enabled: Boolean(model.alias.trim()),
-    })),
+    models: models.value.map((model) => {
+      const effortModels = normalizeEffortModels(model.effortModels)
+      return {
+        id: model.id.trim(),
+        alias: model.alias.trim(),
+        alias_enabled: Boolean(model.alias.trim()),
+        ...(effortModels ? { effort_models: effortModels } : {}),
+      }
+    }),
     confirm_same_target: false,
   }
 }

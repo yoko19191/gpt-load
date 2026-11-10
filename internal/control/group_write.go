@@ -16,22 +16,25 @@ import (
 	"gpt-load/internal/channel"
 	"gpt-load/internal/platform/epochms"
 	app_errors "gpt-load/internal/platform/errors"
+	"gpt-load/internal/reasoning"
 	"gpt-load/internal/storage/models"
 )
 
 const maxCredentialLines = 5000
 
 type GroupModel struct {
-	ID           string `json:"id"`
-	Alias        string `json:"alias"`
-	AliasEnabled bool   `json:"-"`
+	ID           string                  `json:"id"`
+	Alias        string                  `json:"alias"`
+	AliasEnabled bool                    `json:"-"`
+	EffortModels *reasoning.EffortModels `json:"effort_models,omitempty"`
 }
 
 func (model *GroupModel) UnmarshalJSON(data []byte) error {
 	var wire struct {
-		ID           string `json:"id"`
-		Alias        string `json:"alias"`
-		AliasEnabled bool   `json:"alias_enabled"`
+		ID           string                  `json:"id"`
+		Alias        string                  `json:"alias"`
+		AliasEnabled bool                    `json:"alias_enabled"`
+		EffortModels *reasoning.EffortModels `json:"effort_models"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
@@ -45,9 +48,14 @@ func (model *GroupModel) UnmarshalJSON(data []byte) error {
 		}
 		return fmt.Errorf("decode group model trailing value: %w", err)
 	}
+	effortModels, err := wire.EffortModels.Normalize()
+	if err != nil {
+		return fmt.Errorf("decode group model effort_models: %w", err)
+	}
 	model.ID = wire.ID
 	model.Alias = wire.Alias
 	model.AliasEnabled = wire.AliasEnabled
+	model.EffortModels = effortModels
 	return nil
 }
 
@@ -73,9 +81,10 @@ type optionalGroupModels struct {
 }
 
 type groupModelRequestWire struct {
-	ID           string `json:"id"`
-	Alias        string `json:"alias"`
-	AliasEnabled *bool  `json:"alias_enabled"`
+	ID           string                  `json:"id"`
+	Alias        string                  `json:"alias"`
+	AliasEnabled *bool                   `json:"alias_enabled"`
+	EffortModels *reasoning.EffortModels `json:"effort_models"`
 }
 
 type optionalField[T any] struct {
@@ -149,6 +158,7 @@ func (value *optionalGroupModels) UnmarshalJSON(data []byte) error {
 			ID:           wire.ID,
 			Alias:        wire.Alias,
 			AliasEnabled: *wire.AliasEnabled,
+			EffortModels: wire.EffortModels,
 		})
 	}
 
@@ -201,6 +211,11 @@ func normalizeGroupModels(values []GroupModel) ([]GroupModel, error) {
 				return nil, app_errors.ErrValidation
 			}
 		}
+		effortModels, err := value.EffortModels.Normalize()
+		if err != nil {
+			return nil, app_errors.ErrValidation
+		}
+		normalized.EffortModels = effortModels
 		external := normalized.Alias
 		if external == "" {
 			external = normalized.ID

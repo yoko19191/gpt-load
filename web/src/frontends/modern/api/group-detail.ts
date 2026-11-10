@@ -1,4 +1,5 @@
 import { credentialDisplayText } from '@shared/credential-display'
+import { effortLevels, normalizeEffortModels, type EffortModelsDto } from '@shared/effort-models'
 import { readErrorRules, type ErrorRule } from '@shared/error-rules'
 import { codexLiveModes, type CodexLiveMode } from '@shared/codex-live'
 import type { ApiClient } from '@shared/http/client'
@@ -216,15 +217,28 @@ export interface GroupModel {
   alias: string
   clientModel: string
   pricingStatus: 'pending' | 'configured'
+  effortModels?: EffortModelsDto
+}
+function readEffortModels(value: unknown): EffortModelsDto | undefined {
+  if (value === undefined || value === null) return undefined
+  const raw = record(value)
+  return normalizeEffortModels({
+    ...(raw.low !== undefined ? { low: text(raw.low) } : {}),
+    ...(raw.medium !== undefined ? { medium: text(raw.medium) } : {}),
+    ...(raw.high !== undefined ? { high: text(raw.high) } : {}),
+    ...(raw.default !== undefined ? { default: oneOf(raw.default, effortLevels) } : {}),
+  })
 }
 function readModels(value: unknown): GroupModel[] {
   return list(record(value).items).map((value) => {
     const model = record(value)
+    const effortModels = readEffortModels(model.effort_models)
     return {
       id: text(model.id),
       alias: text(model.alias),
       clientModel: text(model.client_model),
       pricingStatus: oneOf(model.pricing_status, ['pending', 'configured']),
+      ...(effortModels ? { effortModels } : {}),
     }
   })
 }
@@ -234,7 +248,7 @@ export async function getGroupModels(client: ApiClient, id: number, signal: Abor
 export async function saveGroupModels(
   client: ApiClient,
   id: number,
-  models: { id: string; alias: string }[],
+  models: { id: string; alias: string; effortModels?: EffortModelsDto }[],
   signal: AbortSignal,
 ) {
   return readModels(
@@ -242,11 +256,15 @@ export async function saveGroupModels(
       method: 'PUT',
       signal,
       json: {
-        models: models.map((model) => ({
-          id: model.id.trim(),
-          alias: model.alias.trim(),
-          alias_enabled: Boolean(model.alias.trim()),
-        })),
+        models: models.map((model) => {
+          const effortModels = normalizeEffortModels(model.effortModels)
+          return {
+            id: model.id.trim(),
+            alias: model.alias.trim(),
+            alias_enabled: Boolean(model.alias.trim()),
+            ...(effortModels ? { effort_models: effortModels } : {}),
+          }
+        }),
       },
     }),
   )

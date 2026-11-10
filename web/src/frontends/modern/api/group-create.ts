@@ -1,4 +1,5 @@
 import type { ApiClient } from '@shared/http/client'
+import type { EffortModelsDto } from '@shared/effort-models'
 import { InvalidResponseError } from '@shared/http/errors'
 import { boolean, integer, list, oneOf, record, text } from './response'
 import { readModelCandidates, type ModelCandidate } from './model-discovery'
@@ -158,6 +159,7 @@ export async function getGroupChannels(
 export interface ModelDraft {
   id: string
   alias: string
+  effortModels?: EffortModelsDto
 }
 export type ProxyOverride = { mode: 'direct' } | { mode: 'custom'; proxy_id: number }
 export interface GroupConnectionDraft {
@@ -172,7 +174,12 @@ export type GroupCreateRequest = GroupConnectionDraft &
   GroupCreateCredentials & {
     name?: string
     price_multiplier: string
-    models: { id: string; alias: string; alias_enabled: boolean }[]
+    models: {
+      id: string
+      alias: string
+      alias_enabled: boolean
+      effort_models?: EffortModelsDto
+    }[]
     confirm_same_target: boolean
   }
 export interface GroupCreateResult {

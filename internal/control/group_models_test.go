@@ -14,6 +14,7 @@ import (
 	app_errors "gpt-load/internal/platform/errors"
 	"gpt-load/internal/pricing"
 	"gpt-load/internal/protocol"
+	"gpt-load/internal/reasoning"
 	"gpt-load/internal/state"
 	"gpt-load/internal/storage/models"
 )
@@ -480,5 +481,57 @@ func assertModelsUpdateStateUnchanged(
 	}
 	if got := loadCreatedGroupModels(t, fixture, groupID); !reflect.DeepEqual(got, wantModels) {
 		t.Fatalf("persisted models changed: got=%#v want=%#v", got, wantModels)
+	}
+}
+
+func TestUpdateGroupModelsPersistsEffortModelsAndCompilesSnapshot(t *testing.T) {
+	t.Parallel()
+	fixture := newServiceFixture(t)
+	created, err := fixture.service.CreateGroup(t.Context(), GroupCreateRequest{
+		ChannelID: channel.OpenAICompatible,
+		Params:    json.RawMessage(`{"base_url":"https://effort-models.example.com/v1"}`),
+		Models: optionalGroupModels{
+			Set:    true,
+			Values: []GroupModel{{ID: "claude-opus-5-5-medium"}},
+		},
+		Credentials:    "sk-effort-models",
+		ConnectionType: "api_key",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	effortModels := &reasoning.EffortModels{
+		Low:     "claude-opus-5-5-low",
+		Medium:  "claude-opus-5-5-medium",
+		High:    "claude-opus-5-5-high",
+		Default: reasoning.EffortLevelMedium,
+	}
+	if _, err := fixture.service.UpdateGroupModels(t.Context(), created.GroupID, GroupModelsUpdateRequest{
+		Models: optionalGroupModels{
+			Set: true,
+			Values: []GroupModel{
+				{
+					ID:           "claude-opus-5-5",
+					EffortModels: effortModels,
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("UpdateGroupModels() error = %v", err)
+	}
+
+	got, err := fixture.service.GetGroupModels(t.Context(), created.GroupID)
+	if err != nil {
+		t.Fatalf("GetGroupModels() error = %v", err)
+	}
+	if len(got.Items) != 1 || got.Items[0].ID != "claude-opus-5-5" || !got.Items[0].EffortModels.Equal(effortModels) {
+		t.Fatalf("GetGroupModels() = %#v, want effort_models %#v", got, effortModels)
+	}
+
+	snapshot := fixture.manager.Current()
+	targets := snapshot.ExecutionCandidates[protocol.OpenAICompletions][execution.OperationChatCompletion]["claude-opus-5-5"]
+	if len(targets) != 1 || !targets[0].EffortModels.Equal(effortModels) {
+		t.Fatalf("compiled targets = %#v, want target EffortModels %#v", targets, effortModels)
 	}
 }

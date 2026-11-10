@@ -1,6 +1,7 @@
 import type { ModelPricingStatus } from '@/api/control/types'
 import type { GroupModelUpdateDto } from '@/app/resources/groups'
 import type { ModelCandidate, ModelCandidateSource } from '@/app/resources/providers'
+import { normalizeEffortModels } from '@shared/effort-models'
 
 export type ModelDraftKey = string | number
 
@@ -124,7 +125,13 @@ export function normalizeModel(model: GroupModelUpdateDto): GroupModelUpdateDto 
   const id = model.id.trim()
   if (!id) return undefined
   const alias = model.alias_enabled ? model.alias.trim() : ''
-  return { id, alias, alias_enabled: model.alias_enabled }
+  const effortModels = normalizeEffortModels(model.effort_models)
+  return {
+    id,
+    alias,
+    alias_enabled: model.alias_enabled,
+    ...(effortModels ? { effort_models: effortModels } : {}),
+  }
 }
 
 export function clientModel(model: GroupModelUpdateDto): string {

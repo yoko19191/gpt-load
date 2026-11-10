@@ -10,6 +10,7 @@ import (
 	"gpt-load/internal/channel"
 	"gpt-load/internal/execution"
 	"gpt-load/internal/protocol"
+	"gpt-load/internal/reasoning"
 	"gpt-load/internal/state"
 )
 
@@ -35,6 +36,8 @@ type Query struct {
 	ResponsesWebsocket *execution.WebsocketCapabilities
 	// AdvisorModels 是请求里 advisor 工具声明的上游模型，需在同一分组内且被访问密钥允许。
 	AdvisorModels []string
+	// Reasoning carries the client's explicit reasoning configuration for effort-tiered model routing.
+	Reasoning reasoning.Config
 }
 
 type Selection struct {
@@ -44,8 +47,19 @@ type Selection struct {
 	ResolvedTarget           channel.ResolvedTarget
 	RouteMode                channel.RouteMode
 	UpstreamModelID          *string
+	ConfiguredModelID        *string
+	EffortModels             *reasoning.EffortModels
 	Group                    state.GroupView
 	ResponsesStoreDowngraded bool
+}
+
+func (selection Selection) WithReasoning(config reasoning.Config) Selection {
+	if selection.EffortModels != nil {
+		if resolved, _, ok := selection.EffortModels.Resolve(config); ok {
+			selection.UpstreamModelID = optionalModel(resolved)
+		}
+	}
+	return selection
 }
 
 type candidateTarget struct {
@@ -335,7 +349,7 @@ func (iterator *Iterator) Next() (Selection, error) {
 			priority := target.group.Priority
 			pool.priorityLimit, pool.lowerPriority = &priority, false
 		}
-		return newSelection(selected, target), nil
+		return newSelection(selected, target, iterator.query.Reasoning), nil
 	}
 	return Selection{}, ErrExhausted
 }
@@ -373,8 +387,20 @@ func (iterator *Iterator) priorityCandidates(pool *candidatePool, candidates []w
 }
 
 func (iterator *Iterator) targetAvailable(target candidateTarget, credential state.CredentialMeta, modes []channel.RouteMode, now time.Time) bool {
-	return slices.Contains(modes, target.target.Mode) &&
-		!modelCooldownUntil(credential.ModelCooldowns, target.target.UpstreamModelID, iterator.operation, now).After(now)
+	if !slices.Contains(modes, target.target.Mode) {
+		return false
+	}
+	if modelCooldownUntil(credential.ModelCooldowns, target.target.UpstreamModelID, iterator.operation, now).After(now) {
+		return false
+	}
+	if target.target.EffortModels != nil {
+		if resolvedModel, _, ok := target.target.EffortModels.Resolve(iterator.query.Reasoning); ok &&
+			resolvedModel != target.target.UpstreamModelID &&
+			modelCooldownUntil(credential.ModelCooldowns, resolvedModel, iterator.operation, now).After(now) {
+			return false
+		}
+	}
+	return true
 }
 
 // 只为已选凭据收集模型，避免每个凭据都复制完整候选列表。
@@ -469,8 +495,14 @@ func cloneWebsocketCapabilities(value *execution.WebsocketCapabilities) *executi
 	return &copy
 }
 
-func newSelection(credential state.CredentialMeta, target candidateTarget) Selection {
+func newSelection(credential state.CredentialMeta, target candidateTarget, reasoningConfig reasoning.Config) Selection {
+	configuredModelID := optionalModel(target.target.UpstreamModelID)
 	upstreamModelID := optionalModel(target.target.UpstreamModelID)
+	if target.target.EffortModels != nil {
+		if resolved, _, ok := target.target.EffortModels.Resolve(reasoningConfig); ok {
+			upstreamModelID = optionalModel(resolved)
+		}
+	}
 	resolvedTarget := target.target.ResolvedTarget
 	resolvedTarget.TargetConfig = append([]byte(nil), resolvedTarget.TargetConfig...)
 	return Selection{
@@ -480,6 +512,8 @@ func newSelection(credential state.CredentialMeta, target candidateTarget) Selec
 		ResolvedTarget:           resolvedTarget,
 		RouteMode:                target.target.Mode,
 		UpstreamModelID:          upstreamModelID,
+		ConfiguredModelID:        configuredModelID,
+		EffortModels:             target.target.EffortModels.Clone(),
 		Group:                    cloneGroupView(target.group),
 		ResponsesStoreDowngraded: target.responsesStoreDowngraded,
 	}
@@ -493,6 +527,7 @@ func optionalModel(value string) *string {
 }
 
 func cloneRouteTarget(target state.RouteTarget) state.RouteTarget {
+	target.EffortModels = target.EffortModels.Clone()
 	target.ResolvedTarget.TargetConfig = append([]byte(nil), target.ResolvedTarget.TargetConfig...)
 	return target
 }
@@ -500,7 +535,7 @@ func cloneRouteTarget(target state.RouteTarget) state.RouteTarget {
 func cloneGroupView(group state.GroupView) state.GroupView {
 	group.Params = append([]byte(nil), group.Params...)
 	group.ClientProtocols = append([]protocol.Protocol(nil), group.ClientProtocols...)
-	group.Models = append([]state.ModelConfig(nil), group.Models...)
+	group.Models = state.CloneModelConfigs(group.Models)
 	group.WeightManual = cloneWeight(group.WeightManual)
 	group.HeaderRules.Set = cloneStringMap(group.HeaderRules.Set)
 	group.HeaderRules.Remove = append([]string(nil), group.HeaderRules.Remove...)

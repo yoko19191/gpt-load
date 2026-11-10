@@ -287,7 +287,7 @@ func (s *websocketConnection) executeTurn(turn websocketTurn) {
 		}
 		original = effective
 	}
-	query := scheduler.Query{ClientProtocol: protocol.OpenAIResponses, Operation: execution.OperationResponsesCreate, RouteRequirement: execution.RouteRequirementNative, ResponsesStorePreference: original.metadata.ResponsesStorePreference, ExternalModel: original.metadata.Model, AccessKey: key, AllowedCredentialIDs: make(map[uint]struct{}), AllowedCredentialRefs: make(map[uint]state.CredentialRef)}
+	query := scheduler.Query{ClientProtocol: protocol.OpenAIResponses, Operation: execution.OperationResponsesCreate, RouteRequirement: execution.RouteRequirementNative, ResponsesStorePreference: original.metadata.ResponsesStorePreference, ExternalModel: original.metadata.Model, Reasoning: original.metadata.Reasoning, AccessKey: key, AllowedCredentialIDs: make(map[uint]struct{}), AllowedCredentialRefs: make(map[uint]state.CredentialRef)}
 	query.ResponsesWebsocket = &original.required
 	groups := scheduler.CandidateGroupIDsForQuery(snapshot, query)
 	for _, ref := range h.registry.CaptureActiveCredentialRefs(groups) {
@@ -432,6 +432,7 @@ func (s *websocketConnection) executeTurn(turn websocketTurn) {
 			iterator.SkipGroup(selection.GroupID)
 			continue
 		}
+		selection = selection.WithReasoning(effective.metadata.Reasoning)
 		if redactionCipher != nil {
 			payload, err = snapshot.RequestRedaction.ApplyWithCipher(payload, redactionCipher)
 		} else {
@@ -792,6 +793,7 @@ func prepareWebsocketPayload(body []byte, original websocketRequest, selection s
 	if err != nil || validateWebsocketControlMutation(original, effective) != nil {
 		return nil, original, ErrUpstreamProtocol
 	}
+	selection = selection.WithReasoning(effective.metadata.Reasoning)
 	model, _ := json.Marshal(optionalModelValue(selection.UpstreamModelID))
 	effective.fields["model"] = model
 	delete(effective.fields, "type")   // Session 接收 Create 参数，传输层生成原生事件封套。

@@ -43,7 +43,11 @@ func mapGroupRowToState(group models.Group) (state.GroupConfig, error) {
 	}
 	runtimeModels := make([]state.ModelConfig, 0, len(storedModels))
 	for _, model := range storedModels {
-		runtimeModels = append(runtimeModels, state.ModelConfig{ID: model.ID, Alias: model.Alias})
+		runtimeModels = append(runtimeModels, state.ModelConfig{
+			ID:           model.ID,
+			Alias:        model.Alias,
+			EffortModels: model.EffortModels.Clone(),
+		})
 	}
 	validationModel := ""
 	if group.ValidationModel != nil {

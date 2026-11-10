@@ -44,6 +44,7 @@ type frozenAttemptPricing struct {
 	channelID        string
 	groupID          uint
 	upstreamModel    string
+	configuredModel  string
 	table            *pricing.Table
 	applicable       bool
 	metadataSet      bool
@@ -663,6 +664,16 @@ func quoteFrozenAttempt(
 		ModelID:   frozen.upstreamModel,
 	}
 	quote, receipt := frozen.table.QuoteForModeWithMultipliers(identity, result, pricingMode, frozen.priceMultipliers)
+	if quote.State == pricing.CostStateUnpriced && frozen.configuredModel != "" && frozen.configuredModel != frozen.upstreamModel {
+		fallbackIdentity := pricing.Identity{
+			ChannelID: frozen.channelID,
+			ModelID:   frozen.configuredModel,
+		}
+		quote, receipt = frozen.table.QuoteForModeWithMultipliers(fallbackIdentity, result, pricingMode, frozen.priceMultipliers)
+		if receipt != nil {
+			receipt.Rule.ModelID = frozen.upstreamModel
+		}
+	}
 	observation.CostState = string(quote.State)
 	observation.PricingCompleteness = string(quote.Completeness)
 	observation.EstimatedCostNanoUSD = int64(quote.EstimatedCostNanoUSD)

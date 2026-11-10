@@ -10,6 +10,7 @@ import (
 	"gpt-load/internal/channel"
 	app_errors "gpt-load/internal/platform/errors"
 	"gpt-load/internal/pricing"
+	"gpt-load/internal/reasoning"
 	"gpt-load/internal/storage/models"
 )
 
@@ -18,11 +19,12 @@ type GroupModelsUpdateRequest struct {
 }
 
 type GroupModelResponse struct {
-	ID            string        `json:"id"`
-	Alias         string        `json:"alias"`
-	AliasEnabled  bool          `json:"alias_enabled"`
-	ClientModel   string        `json:"client_model"`
-	PricingStatus PricingStatus `json:"pricing_status"`
+	ID            string                  `json:"id"`
+	Alias         string                  `json:"alias"`
+	AliasEnabled  bool                    `json:"alias_enabled"`
+	ClientModel   string                  `json:"client_model"`
+	PricingStatus PricingStatus           `json:"pricing_status"`
+	EffortModels  *reasoning.EffortModels `json:"effort_models,omitempty"`
 }
 
 type GroupModelsResponse struct {
@@ -84,6 +86,7 @@ func mapGroupModelsResponse(
 			AliasEnabled:  model.Alias != "",
 			ClientModel:   model.ID,
 			PricingStatus: PricingStatusPending,
+			EffortModels:  model.EffortModels.Clone(),
 		}
 		if item.AliasEnabled {
 			item.ClientModel = model.Alias

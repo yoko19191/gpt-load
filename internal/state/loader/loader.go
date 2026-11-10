@@ -28,6 +28,7 @@ import (
 	"gpt-load/internal/platform/utils"
 	"gpt-load/internal/pricing"
 	"gpt-load/internal/protocol"
+	"gpt-load/internal/reasoning"
 	"gpt-load/internal/requestaudit"
 	"gpt-load/internal/requestredact"
 	"gpt-load/internal/state"
@@ -86,8 +87,9 @@ type compileRows struct {
 }
 
 type modelDTO struct {
-	ID    string `json:"id"`
-	Alias string `json:"alias"`
+	ID           string                  `json:"id"`
+	Alias        string                  `json:"alias"`
+	EffortModels *reasoning.EffortModels `json:"effort_models,omitempty"`
 }
 
 type filterDTO struct {
@@ -785,7 +787,15 @@ func mapSystemAndGroups(
 
 		runtimeModels := make([]state.ModelConfig, 0, len(storedModels))
 		for _, model := range storedModels {
-			runtimeModels = append(runtimeModels, state.ModelConfig{ID: model.ID, Alias: model.Alias})
+			effortModels, err := model.EffortModels.Normalize()
+			if err != nil {
+				return state.CompileInput{}, fmt.Errorf("group %d model %q effort_models: %w", row.ID, model.ID, err)
+			}
+			runtimeModels = append(runtimeModels, state.ModelConfig{
+				ID:           model.ID,
+				Alias:        model.Alias,
+				EffortModels: effortModels,
+			})
 		}
 		multiplier, err := persistedPriceMultiplier(row.PriceMultiplierMicros)
 		if err != nil {

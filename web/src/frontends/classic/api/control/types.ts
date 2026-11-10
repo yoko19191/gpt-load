@@ -1,4 +1,5 @@
 import type { CodexLiveMode } from '@shared/codex-live'
+import type { EffortModelsDto } from '@shared/effort-models'
 import type { ErrorRule } from '@shared/error-rules'
 import type { ProtocolValue } from './protocols'
 
@@ -170,6 +171,7 @@ export interface GroupModelItemDto {
   alias_enabled: boolean
   client_model: string
   pricing_status: ModelPricingStatus
+  effort_models?: EffortModelsDto
 }
 
 export interface GroupModelsDto {

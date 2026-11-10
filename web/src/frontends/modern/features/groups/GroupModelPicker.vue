@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ListChecks, Plus, Search, Trash2 } from '@lucide/vue'
+import { Layers, ListChecks, Plus, Search, Trash2 } from '@lucide/vue'
 import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { ModelCandidate } from '@modern/api/model-discovery'
 import {
+  AppBadge,
   AppButton,
   AppCollectionState,
   AppIconButton,
@@ -13,9 +14,16 @@ import {
 } from '@modern/components/ui'
 import { useURLState, positivePage } from '@modern/app/url-state'
 import { useLoadingActivity, useLoadingFeedback } from '@modern/components/ui/loading'
+import {
+  detectEffortFamilies,
+  effortModelsCount,
+  type DetectedEffortFamily,
+  type EffortModelsDto,
+} from '@shared/effort-models'
 import ModelSelectionDialog from '../models/ModelSelectionDialog.vue'
 import ModelSourceBadges from '../models/ModelSourceBadges.vue'
 import ModelPriceBadge from '../models/ModelPriceBadge.vue'
+import ModelEffortDialog from './ModelEffortDialog.vue'
 import { modelErrors, type GroupDraftModel } from './group-create-rules'
 
 const props = defineProps<{
@@ -85,10 +93,32 @@ const errors = computed(() => modelErrors(models.value))
 const candidatesByID = computed(
   () => new Map(props.candidates.map((candidate) => [candidate.id, candidate])),
 )
+const effortDialogOpen = ref(false)
+const effortTargetKey = ref<number>()
+const detectedFamilies = computed(() =>
+  detectEffortFamilies(
+    models.value
+      .filter((model) => !model.effortModels)
+      .map((model) => model.id.trim())
+      .filter(Boolean),
+  ),
+)
 const filtered = computed(() => {
   const terms = search.value.trim().toLocaleLowerCase().split(/\s+/u).filter(Boolean)
   return models.value.filter((model) =>
-    terms.every((term) => [model.id, model.alias].join(' ').toLocaleLowerCase().includes(term)),
+    terms.every((term) =>
+      [
+        model.id,
+        model.alias,
+        model.effortModels?.low,
+        model.effortModels?.medium,
+        model.effortModels?.high,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLocaleLowerCase()
+        .includes(term),
+    ),
   )
 })
 const rows = computed(() =>
@@ -185,6 +215,132 @@ function update(key: number, field: 'id' | 'alias', value: string): void {
       : model,
   )
 }
+function openEffortDialog(targetKey?: number): void {
+  if (props.disabled) return
+  effortTargetKey.value = targetKey
+  effortDialogOpen.value = true
+}
+function closeEffortDialog(): void {
+  effortDialogOpen.value = false
+  effortTargetKey.value = undefined
+}
+function saveEffortConfig(payload: {
+  targetKey?: number
+  id: string
+  alias: string
+  effortModels: EffortModelsDto
+  removeSourceRows: boolean
+}): void {
+  reserveKeys()
+  const tierSet = new Set(
+    [
+      payload.effortModels.low,
+      payload.effortModels.medium,
+      payload.effortModels.high,
+      `${payload.id}-low`,
+      `${payload.id}-medium`,
+      `${payload.id}-high`,
+      `${payload.id}-tiered`,
+    ].filter((value): value is string => Boolean(value)),
+  )
+  let updatedKey = payload.targetKey
+  if (updatedKey === undefined) {
+    const existingBase = models.value.find((item) => item.id.trim() === payload.id)
+    if (existingBase) updatedKey = existingBase.key
+  }
+  const next: GroupDraftModel[] = []
+  let inserted = false
+  for (const item of models.value) {
+    if (updatedKey !== undefined && item.key === updatedKey) {
+      next.push({
+        ...item,
+        id: payload.id,
+        alias: payload.alias,
+        effortModels: payload.effortModels,
+      })
+      inserted = true
+      continue
+    }
+    if (
+      payload.removeSourceRows &&
+      tierSet.has(item.id.trim()) &&
+      item.id.trim() !== payload.id &&
+      !item.effortModels
+    ) {
+      continue
+    }
+    next.push(item)
+  }
+  if (!inserted) {
+    next.push({
+      key: nextKey++,
+      id: payload.id,
+      alias: payload.alias,
+      origin: 'manual',
+      effortModels: payload.effortModels,
+    })
+  }
+  models.value = next
+  closeEffortDialog()
+}
+function clearEffortConfig(targetKey: number): void {
+  models.value = models.value.map((item) =>
+    item.key === targetKey ? { ...item, effortModels: undefined } : item,
+  )
+  closeEffortDialog()
+}
+function applyDetectedFamilies(families: DetectedEffortFamily[]): void {
+  if (!families.length) return
+  reserveKeys()
+  const familyByBase = new Map(families.map((family) => [family.baseId, family]))
+  const sourceSet = new Set<string>()
+  for (const family of families) {
+    for (const sourceId of family.sourceIds) {
+      if (sourceId !== family.baseId) sourceSet.add(sourceId)
+    }
+  }
+  const handledBases = new Set<string>()
+  const next: GroupDraftModel[] = []
+  for (const item of models.value) {
+    const trimmed = item.id.trim()
+    const matchingBase = familyByBase.get(trimmed)
+    if (matchingBase && !handledBases.has(trimmed)) {
+      handledBases.add(trimmed)
+      next.push({
+        ...item,
+        id: matchingBase.baseId,
+        effortModels: matchingBase.effortModels,
+      })
+      continue
+    }
+    if (!item.effortModels && sourceSet.has(trimmed)) {
+      const ownerFamily = families.find((family) => family.sourceIds.includes(trimmed))
+      if (ownerFamily && !handledBases.has(ownerFamily.baseId)) {
+        handledBases.add(ownerFamily.baseId)
+        next.push({
+          ...item,
+          id: ownerFamily.baseId,
+          effortModels: ownerFamily.effortModels,
+        })
+      }
+      continue
+    }
+    next.push(item)
+  }
+  for (const family of families) {
+    if (!handledBases.has(family.baseId)) {
+      next.push({
+        key: nextKey++,
+        id: family.baseId,
+        alias: '',
+        origin: 'discovery',
+        effortModels: family.effortModels,
+      })
+    }
+  }
+  models.value = next
+  closeEffortDialog()
+}
 defineExpose({
   focusFirstInvalid: async () => {
     const model = models.value.find((item) => errors.value.has(item.key))
@@ -227,6 +383,18 @@ useLoadingActivity(() => filtering.value || props.loading)
           >{{ t('modelSelection.title') }}</AppButton
         >
         <slot name="actions" />
+        <AppButton
+          :icon="Layers"
+          :variant="detectedFamilies.length ? 'outline' : 'ghost'"
+          size="sm"
+          :disabled="disabled"
+          @click="openEffortDialog()"
+          >{{
+            detectedFamilies.length
+              ? t('groupCreate.effortAutoDetected', { count: detectedFamilies.length })
+              : t('groupCreate.effortAggregate')
+          }}</AppButton
+        >
         <AppButton :icon="Plus" variant="ghost" size="sm" :disabled="disabled" @click="addManual">{{
           t('groupCreate.manualModel')
         }}</AppButton>
@@ -299,14 +467,31 @@ useLoadingActivity(() => filtering.value || props.loading)
               @update:model-value="update(model.key, 'alias', $event)"
             />
           </div>
-          <AppIconButton
-            :icon="Trash2"
-            :label="t('groupCreate.removeModel', { name: model.id || t('groupCreate.modelID') })"
-            size="sm"
-            :disabled="disabled"
-            @click="models = models.filter((item) => item.key !== model.key)"
-          />
+          <div class="modern-create-model-row-actions">
+            <AppIconButton
+              :icon="Layers"
+              :label="t('groupCreate.effortAggregate')"
+              size="sm"
+              :disabled="disabled"
+              @click="openEffortDialog(model.key)"
+            />
+            <AppIconButton
+              :icon="Trash2"
+              :label="t('groupCreate.removeModel', { name: model.id || t('groupCreate.modelID') })"
+              size="sm"
+              :disabled="disabled"
+              @click="models = models.filter((item) => item.key !== model.key)"
+            />
+          </div>
           <div class="modern-create-model-evidence">
+            <AppBadge v-if="model.effortModels" :icon="Layers" tone="brand" size="xs">
+              {{
+                t('groupCreate.effortBadge', {
+                  count: effortModelsCount(model.effortModels),
+                  default: model.effortModels.default ?? 'medium',
+                })
+              }}
+            </AppBadge>
             <ModelSourceBadges
               v-if="
                 model.origin === 'manual' || candidatesByID.get(model.id.trim())?.sources?.length
@@ -344,6 +529,16 @@ useLoadingActivity(() => filtering.value || props.loading)
     @close="closeSelection"
     @refresh="emit('discover')"
     @confirm="addCandidates"
+  />
+  <ModelEffortDialog
+    v-if="effortDialogOpen"
+    :models="models"
+    :candidate-ids="candidates.map((item) => item.id)"
+    :target-key="effortTargetKey"
+    @close="closeEffortDialog"
+    @save="saveEffortConfig"
+    @clear="clearEffortConfig"
+    @apply-families="applyDetectedFamilies"
   />
 </template>
 
@@ -415,9 +610,16 @@ useLoadingActivity(() => filtering.value || props.loading)
 .modern-create-model-labels,
 .modern-create-model-row {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) var(--modern-control-sm);
+  grid-template-columns:
+    minmax(0, 1.2fr) minmax(0, 1fr)
+    calc(var(--modern-control-sm) * 2 + var(--modern-space-1));
   gap: var(--modern-space-2);
   align-items: start;
+}
+.modern-create-model-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--modern-space-1);
 }
 .modern-create-model-labels {
   color: var(--modern-muted);
@@ -460,7 +662,7 @@ useLoadingActivity(() => filtering.value || props.loading)
     display: none;
   }
   .modern-create-model-row {
-    grid-template-columns: minmax(0, 1fr) var(--modern-touch-target);
+    grid-template-columns: minmax(0, 1fr) max-content;
   }
   .modern-create-model-field {
     display: grid;

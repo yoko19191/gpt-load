@@ -22,7 +22,6 @@ import (
 	"gpt-load/internal/codexrecovery"
 	"gpt-load/internal/connection"
 	"gpt-load/internal/dialect"
-	"gpt-load/internal/effortvariant"
 	"gpt-load/internal/execution"
 	"gpt-load/internal/health"
 	"gpt-load/internal/httplifecycle"
@@ -97,7 +96,6 @@ type runtimeCredentialRegistry interface {
 type Handler struct {
 	guardrails          requestaudit.Cache
 	autoTasks           autoTaskCache
-	effortVariants      *effortvariant.Source
 	decisionClient      autoDecisionRunner
 	manager             *state.Manager
 	catalog             *catalog.Runtime
@@ -141,10 +139,11 @@ func (handler *Handler) freezeAttemptPricing(
 	accessKeyMultiplier pricing.PriceMultiplier,
 ) frozenAttemptPricing {
 	frozen := frozenAttemptPricing{
-		channelID:     string(selection.ChannelID),
-		groupID:       selection.GroupID,
-		upstreamModel: optionalModelValue(selection.UpstreamModelID),
-		applicable:    observations.ObserveUsage,
+		channelID:       string(selection.ChannelID),
+		groupID:         selection.GroupID,
+		upstreamModel:   optionalModelValue(selection.UpstreamModelID),
+		configuredModel: optionalModelValue(selection.ConfiguredModelID),
+		applicable:      observations.ObserveUsage,
 		metadataSet:   true,
 		pricingMode:   observations.PricingMode,
 		priceMultipliers: pricing.PriceMultipliers{
@@ -187,7 +186,6 @@ func NewHandler(
 		forwarder: forwarder, dialects: dialects, stats: stats, mutations: mutations,
 		limiter: limiter, requestLogSink: requestLogSink, priceTables: priceTables,
 		affinityCache:    affinity.NewCache(),
-		effortVariants:   effortvariant.NewSourceFromEnv(logrus.StandardLogger().Warnf),
 		invalidLineage:   codexrecovery.NewInvalidLineage(),
 		responseBindings: state.NewResponseBindings(),
 		websocketLimits:  defaultWebsocketLimits(),
@@ -660,19 +658,6 @@ func (handler *Handler) Handle(ginContext *gin.Context) {
 		return
 	}
 	recorder.setClientModel(model)
-	if target, level, matched := handler.effortVariants.Table().Resolve(model, metadata.Reasoning); matched {
-		if rewriter, supported := selectedDialect.(dialect.ModelRewriter); supported {
-			rewritten, rewriteErr := rewriter.RewriteRequestModel(parsed, target)
-			if rewriteErr != nil {
-				handler.completeReason(ginContext, recorder, reasonInvalidProtocolRequest)
-				return
-			}
-			logrus.Debugf("effort variant %q resolved to %q (level %s)", model, target, level)
-			parsed = rewritten
-			model = target
-			metadata.Model = &target
-		}
-	}
 	recorder.setOperation(metadata.Operation)
 	recorder.setStream(metadata.Stream)
 	var boundAuto *automodel.Selection
@@ -710,6 +695,7 @@ func (handler *Handler) Handle(ginContext *gin.Context) {
 		ResponsesStorePreference: metadata.ResponsesStorePreference,
 		ExternalModel:            metadata.Model,
 		AdvisorModels:            metadata.AdvisorModels,
+		Reasoning:                metadata.Reasoning,
 		AccessKey:                accessKey,
 	}
 	candidateGroupIDs := scheduler.CandidateGroupIDsForQuery(snapshot, query)
@@ -1309,6 +1295,9 @@ func (handler *Handler) executeAttempts(
 		}
 		attemptObservations := prepared.observations
 		attemptObservationsAvailable := prepared.observationsAvailable
+		if attemptObservationsAvailable {
+			selection = selection.WithReasoning(attemptObservations.Reasoning)
+		}
 		decryptedCredential, err := handler.encryption.Decrypt(encrypted)
 		if err != nil {
 			if !recordCandidatePreparationFailure(

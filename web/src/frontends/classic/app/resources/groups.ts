@@ -1,5 +1,6 @@
 import { readConcurrency } from '@shared/concurrency'
 import { codexLiveModes, type CodexLiveMode } from '@shared/codex-live'
+import { effortLevels, normalizeEffortModels, type EffortModelsDto } from '@shared/effort-models'
 import { readErrorRules, type ErrorRule } from '@shared/error-rules'
 import { keepPreviousData, queryOptions, type QueryClient } from '@tanstack/vue-query'
 import { computed, toValue, type MaybeRefOrGetter } from 'vue'
@@ -85,6 +86,7 @@ const groupModelItemFields = [
   'alias_enabled',
   'client_model',
   'pricing_status',
+  'effort_models',
 ] as const
 const groupCollectionFields = ['observed_at_ms', 'summary', 'items', 'pagination'] as const
 const groupCollectionSummaryFields = ['total', 'available', 'unavailable', 'disabled'] as const
@@ -218,6 +220,7 @@ export interface GroupModelUpdateDto {
   id: string
   alias: string
   alias_enabled: boolean
+  effort_models?: EffortModelsDto
 }
 
 export interface GroupModelsReplaceRequest {
@@ -475,6 +478,20 @@ export function projectGroupSettings(value: unknown): GroupSettingsDto {
   }
 }
 
+function projectEffortModels(value: unknown): EffortModelsDto | undefined {
+  if (value === undefined || value === null) return undefined
+  const record = projectRecord(value)
+  assertNoSecretLikeFields(record, ['low', 'medium', 'high', 'default'])
+  const normalized = normalizeEffortModels({
+    ...(record.low !== undefined ? { low: projectNonBlankString(record.low) } : {}),
+    ...(record.medium !== undefined ? { medium: projectNonBlankString(record.medium) } : {}),
+    ...(record.high !== undefined ? { high: projectNonBlankString(record.high) } : {}),
+    ...(record.default !== undefined ? { default: projectEnum(record.default, effortLevels) } : {}),
+  })
+  if (!normalized) throw new InvalidResponseError()
+  return normalized
+}
+
 function projectGroupModelItem(value: unknown): GroupModelItemDto {
   const record = projectRecord(value)
   assertNoSecretLikeFields(record, groupModelItemFields)
@@ -482,6 +499,7 @@ function projectGroupModelItem(value: unknown): GroupModelItemDto {
   const aliasEnabled = projectBoolean(record.alias_enabled)
   const id = projectNonBlankString(record.id)
   const clientModel = projectNonBlankString(record.client_model)
+  const effortModels = projectEffortModels(record.effort_models)
   if ((alias !== '') !== aliasEnabled || clientModel !== (aliasEnabled ? alias : id)) {
     throw new InvalidResponseError()
   }
@@ -491,6 +509,7 @@ function projectGroupModelItem(value: unknown): GroupModelItemDto {
     alias_enabled: aliasEnabled,
     client_model: clientModel,
     pricing_status: projectEnum(record.pricing_status, ['pending', 'configured'] as const),
+    ...(effortModels ? { effort_models: effortModels } : {}),
   }
 }
 

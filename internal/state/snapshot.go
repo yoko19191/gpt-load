@@ -23,6 +23,7 @@ import (
 	"gpt-load/internal/platform/config"
 	"gpt-load/internal/pricing"
 	"gpt-load/internal/protocol"
+	"gpt-load/internal/reasoning"
 	"gpt-load/internal/requestaudit"
 	"gpt-load/internal/requestredact"
 )
@@ -74,8 +75,24 @@ type CredentialConfig struct {
 }
 
 type ModelConfig struct {
-	ID    string
-	Alias string
+	ID           string
+	Alias        string
+	EffortModels *reasoning.EffortModels
+}
+
+func CloneModelConfigs(models []ModelConfig) []ModelConfig {
+	if len(models) == 0 {
+		return nil
+	}
+	cloned := make([]ModelConfig, len(models))
+	for i, model := range models {
+		cloned[i] = ModelConfig{
+			ID:           model.ID,
+			Alias:        model.Alias,
+			EffortModels: model.EffortModels.Clone(),
+		}
+	}
+	return cloned
 }
 
 // ExternalName 是客户端可见、访问密钥模型过滤使用的模型名。
@@ -123,6 +140,7 @@ type FilterSet struct {
 type RouteTarget struct {
 	GroupID         uint
 	UpstreamModelID string
+	EffortModels    *reasoning.EffortModels
 	Mode            channel.RouteMode
 	ResolvedTarget  channel.ResolvedTarget
 }
@@ -367,7 +385,7 @@ func Compile(input CompileInput) (*ConfigSnapshot, error) {
 			Name:                      group.Name,
 			ValidationProtocol:        group.ValidationProtocol,
 			ValidationModel:           strings.TrimSpace(group.ValidationModel),
-			Models:                    append([]ModelConfig(nil), group.Models...),
+			Models:                    CloneModelConfigs(group.Models),
 			Timeouts:                  resolved.Timeouts,
 			HeaderRules:               resolved.HeaderRules,
 			BlacklistThreshold:        resolved.BlacklistThreshold,
@@ -531,9 +549,15 @@ func appendExecutionTargets(
 					if !supported {
 						return fmt.Errorf("compile group %d channel has no route mode for %q/%q model %q", group.ID, clientProtocol, operation, model.ID)
 					}
+					for _, effortModel := range model.EffortModels.Models() {
+						if _, effortSupported := target.ModeForModel(clientProtocol, operation, effortModel); !effortSupported {
+							return fmt.Errorf("compile group %d channel has no route mode for %q/%q effort model %q", group.ID, clientProtocol, operation, effortModel)
+						}
+					}
 					appendExecutionTarget(index, clientProtocol, operation, externalModelName(model), RouteTarget{
 						GroupID: group.ID, UpstreamModelID: strings.TrimSpace(model.ID),
-						Mode: modelMode, ResolvedTarget: cloneResolvedTarget(target),
+						EffortModels: model.EffortModels.Clone(),
+						Mode:         modelMode, ResolvedTarget: cloneResolvedTarget(target),
 					})
 				}
 			default:
@@ -640,6 +664,9 @@ func validateCompileInput(input CompileInput) error {
 		for _, model := range group.Models {
 			if strings.TrimSpace(model.ID) == "" {
 				return fmt.Errorf("group %d model id is required", group.ID)
+			}
+			if _, err := model.EffortModels.Normalize(); err != nil {
+				return fmt.Errorf("group %d model %q effort_models: %w", group.ID, model.ID, err)
 			}
 			external := externalModelName(model)
 			mapping := [2]string{external, strings.TrimSpace(model.ID)}
